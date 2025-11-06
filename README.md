@@ -5,7 +5,7 @@ podscript is a tool to generate transcripts for podcasts (and other similar audi
 ## Install
 
 ```shell
-> go install github.com/deepakjois/podscript@latest
+> go install github.com/cottonggeeks/podscript@latest
 
 > ~/go/bin/podscript --help
 ```
@@ -117,4 +117,4 @@ Feel free to drop me a note on [X](https://x.com/debugjois) or [Email Me](mailto
 
 ## License
 
-[MIT](https://github.com/deepakjois/podscript/raw/main/LICENSE)
+[MIT](https://github.com/cottonggeeks/podscript/raw/main/LICENSE)

@@ -1,4 +1,4 @@
-module github.com/deepakjois/podscript
+module github.com/cottonggeeks/podscript
 
 go 1.23.0
 
