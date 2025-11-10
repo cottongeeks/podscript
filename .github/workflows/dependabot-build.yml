@@ -1,0 +1,165 @@
+name: Dependabot Build and Artifacts
+
+on:
+  pull_request:
+    branches:
+      - main
+      - master
+
+jobs:
+  check-dependabot:
+    # Only run if the PR is from Dependabot
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build Go project
+        run: |
+          echo "Building Go project..."
+          go build -v
+          if [ $? -ne 0 ]; then
+            echo "Go build failed!"
+            exit 1
+          fi
+          echo "Go build successful!"
+
+      - name: Build Node.js frontend
+        working-directory: ./web/frontend
+        run: |
+          echo "Installing Node.js dependencies..."
+          npm ci
+          echo "Building frontend..."
+          npm run build
+          if [ $? -ne 0 ]; then
+            echo "Frontend build failed!"
+            exit 1
+          fi
+          echo "Frontend build successful!"
+
+      - name: Copy build artifacts to root dist folder
+        run: |
+          echo "Copying build artifacts..."
+          rm -rf dist
+          cp -r web/frontend/dist dist
+          echo "Build artifacts copied successfully!"
+
+      - name: Check for changes
+        id: check_changes
+        run: |
+          git diff --quiet dist/ || echo "changes=true" >> $GITHUB_OUTPUT
+          git diff --quiet dist/ && echo "changes=false" >> $GITHUB_OUTPUT
+
+      - name: Configure Git
+        if: steps.check_changes.outputs.changes == 'true'
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+
+      - name: Create new branch with artifacts
+        if: steps.check_changes.outputs.changes == 'true'
+        run: |
+          ORIGINAL_BRANCH="${{ github.event.pull_request.head.ref }}"
+          NEW_BRANCH="${ORIGINAL_BRANCH}-with-dist"
+
+          git checkout -b "$NEW_BRANCH"
+          git add dist/
+          git commit -m "chore: Rebuild frontend dist artifacts from $ORIGINAL_BRANCH"
+          git push origin "$NEW_BRANCH" --force
+
+          echo "ORIGINAL_BRANCH=$ORIGINAL_BRANCH" >> $GITHUB_ENV
+          echo "NEW_BRANCH=$NEW_BRANCH" >> $GITHUB_ENV
+
+      - name: Create Pull Request for artifacts
+        if: steps.check_changes.outputs.changes == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Check if PR already exists
+          EXISTING_PR=$(gh pr list --head "$NEW_BRANCH" --json number --jq '.[0].number')
+
+          if [ -z "$EXISTING_PR" ]; then
+            gh pr create \
+              --title "chore: Rebuild frontend dist artifacts from $ORIGINAL_BRANCH" \
+              --body "This PR contains the rebuilt frontend distribution artifacts from the Dependabot PR #${{ github.event.pull_request.number }}.
+
+## Changes
+- Rebuilt frontend using \`npm run build\`
+- Updated dist folder with latest build artifacts
+
+## Related PR
+- Original Dependabot PR: #${{ github.event.pull_request.number }}
+
+## Build Status
+- ✅ Go build: Successful
+- ✅ Frontend build: Successful
+
+This PR was automatically created by the Dependabot Build workflow." \
+              --base main \
+              --head "$NEW_BRANCH"
+            echo "Created new PR for build artifacts"
+          else
+            echo "PR already exists: #$EXISTING_PR"
+            gh pr edit "$EXISTING_PR" \
+              --title "chore: Rebuild frontend dist artifacts from $ORIGINAL_BRANCH" \
+              --body "This PR contains the rebuilt frontend distribution artifacts from the Dependabot PR #${{ github.event.pull_request.number }}.
+
+## Changes
+- Rebuilt frontend using \`npm run build\`
+- Updated dist folder with latest build artifacts
+
+## Related PR
+- Original Dependabot PR: #${{ github.event.pull_request.number }}
+
+## Build Status
+- ✅ Go build: Successful
+- ✅ Frontend build: Successful
+
+This PR was automatically updated by the Dependabot Build workflow."
+            echo "Updated existing PR: #$EXISTING_PR"
+          fi
+
+      - name: Add comment to original PR
+        if: steps.check_changes.outputs.changes == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr comment ${{ github.event.pull_request.number }} \
+            --body "✅ **Build Status**
+
+Both Go and frontend builds completed successfully!
+
+A separate PR has been created with the rebuilt frontend artifacts:
+- Branch: \`$NEW_BRANCH\`
+
+Please review and merge both PRs as needed."
+
+      - name: Add success comment (no changes)
+        if: steps.check_changes.outputs.changes == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr comment ${{ github.event.pull_request.number }} \
+            --body "✅ **Build Status**
+
+Both Go and frontend builds completed successfully!
+
+No changes to distribution artifacts were detected."
